@@ -1,0 +1,14 @@
+= xfmedia scrobbler =
+
+The [http://spuriousinterrupt.org/projects/xfmedia xfmedia player] is a 
+nice simple client for playing media.
+
+Unfortunately, it doesn't have a scrobbler. It does have a quite nice,
+unixy, information system.
+
+This is a daemon like program that reads the xfmedia information and
+submits it to last.fm.
+
+This is not ready for anyone else to use yet really... I am only just
+getting it to work for me.
+
