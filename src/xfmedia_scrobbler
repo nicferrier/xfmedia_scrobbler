@@ -1,0 +1,146 @@
+#!/usr/bin/python
+
+"""
+Scrobble stuff that is coming over the xfmedia player.
+
+Requires a config file to store the information about 
+your last.fm auth:
+
+  [scrobbler]
+  username = lastfm_username
+  password = lastfm_password
+
+"""
+
+import os
+import time
+import sys
+import re
+from datetime import datetime
+
+FILENAME=os.path.join(os.environ["HOME"], ".xfmediascrobble")
+        
+def xfmediadata(**kwargs):
+    """
+    Read the xfmedia song data.
+
+    Returns an object which maps the keys from the xfmedia file into objects.
+    """
+    def fv(l):
+        a,b = l.split(":")
+        return a.strip().replace(" ", "_").lower(), b.strip()
+
+    # Set up a standard dict to begin with
+    d = kwargs
+    with open("/tmp/xfmedia-infopipe.%s.0" % os.getuid()) as fd:
+        content = fd.read()
+        d.update(dict([fv(l) for l in content.split("\n") if ":" in l]))
+
+    class Data(object):
+        def __setattr__(self, name, value):
+            if name in d:
+                d[name] = value
+        def __getattr__(self, name):
+            if name in d:
+                return d[name]
+    return Data()
+
+
+import scrobbler
+
+class Scrobble(object):
+    PLAYING_RE = re.compile("\\((.*)\\) (.*)")
+
+    def __init__(self):
+        from ConfigParser import ConfigParser
+        config = ConfigParser()
+        config.read(FILENAME)
+
+        scrobbler.login(
+            config.get("scrobbler", "username"), 
+            config.get("scrobbler", "password"),
+            hashpw=True
+            )
+
+    def now(self, song, track_pos):
+        try:
+            artist, title = self.PLAYING_RE.match(song).groups()
+        except Exception:
+            print >>sys.stderr, "some failure while reading song data: %s" % song
+        else:
+            print "now:: %s %s %s" % (artist, song, track_pos)
+            scrobbler.now_playing(artist, title)
+
+    def send(self, song, start_time, length):
+        try:
+            artist, title = self.PLAYING_RE.match(song).groups()
+        except Exception:
+            print >>sys.stderr, "some failure while reading song data: %s" % song
+        else:
+            stime = time.mktime(start_time.timetuple())
+            print "submit:: %s %s %s %s %s" % (
+                artist, 
+                song, 
+                length, 
+                stime, 
+                scrobbler.submit(
+                    artist=artist, 
+                    track=title, 
+                    time=int(stime),
+                    source="P",
+                    length=length,
+                    autoflush=True
+                    )
+                )
+
+
+def track_test(track_pos, track_length):
+    """The last.fm track test"""
+    tp = int(track_pos)
+    tl = int(track_length)
+    print "tp = %s tl = %s" % (tp, tl)
+    return tp > 240 or (tl > 30 and tp > ((tl*1.0) / 2.0))
+
+
+def main():
+    # This is used to hold the track we found last poll
+    last = xfmediadata(now_playing="", start_time=datetime.utcnow())
+    # The track position we last sent a now for
+    last_now_pos = 0
+    while True:
+        time.sleep(10)
+
+        # Poll xfmedia
+        current = xfmediadata(
+            start_time=last.start_time \
+                if last.status != "Stopped" else datetime.utcnow()
+            )
+
+        # Send the current scrobble if we should
+        if current.status == "Playing" \
+                and int(current.track_position) > 30 \
+                and int(current.track_position) > last_now_pos + 30:
+            Scrobble().now(current.now_playing, current.track_position)
+            last_now_pos = int(current.track_position)
+
+        # Detect when the track changes or stops
+        if current.status == "Stopped" or (
+            current.now_playing != last.now_playing
+            ):
+            last_now_pos = 0
+            # Publish the song if we need to
+            if track_test(last.track_position, last.track_length):
+                Scrobble().send(
+                    last.now_playing, 
+                    last.start_time,
+                    last.track_length
+                    )
+
+        # Save the current state
+        last = current
+
+
+if __name__ == "__main__":
+    main()
+
+# End
